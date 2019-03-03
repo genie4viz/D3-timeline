@@ -1,0 +1,484 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>Line chart with area filled by slider manipulation (d3.v5)</title>
+    <script src="d3v5.js"></script>
+    <style>
+        #chart{
+            height: 500px;
+            width: 100%
+        }
+        text {
+            font-size: 11px;
+            font-family: Arial, Helvetica, sans-serif;
+        }
+        .grid path {
+            stroke-width: 0;
+        }
+        .grid line {
+            stroke: lightgrey;
+            stroke-opacity: 0.7;
+            shape-rendering: crispEdges;
+        }
+        .axis.axis--x .tick line, .axis.axis--x path {
+            stroke: darkgray;
+        }
+        .line {
+            fill: none;
+            stroke: steelblue;
+            stroke-width: 3px;
+        }
+        .area {							
+            stroke-width: 0px;			
+        }
+        .button {
+            cursor: pointer;
+        }
+        .button text {
+            pointer-events: none;
+            text-anchor: middle;
+            user-select: none;
+            -moz-user-select: none;
+            -webkit-user-select: none;
+            -ms-user-select: none;
+        }
+        .track,
+        .track-inset,
+        .track-overlay {
+            stroke-linecap: round;
+        }
+        .track {
+            stroke: #000;
+            stroke-opacity: 0.3;
+            stroke-width: 10px;
+        }
+        .track-inset {
+            stroke: #ddd;
+            stroke-width: 8px;
+        }
+        .track-overlay {
+            pointer-events: stroke;
+            stroke-width: 50px;
+            stroke: transparent;
+            cursor: pointer;
+        }
+        .handle {
+            fill: #fff;
+            stroke: #000;
+            stroke-opacity: 0.5;
+            stroke-width: 1.25px;
+        }
+    </style>
+</head>
+<body>
+	<div id="chart"></div>
+
+<script>
+var timeouts = [],
+		parseTime = d3.timeParse("%m/%e/%Y");
+d3.dsv(";", "dataset.csv" , function(d) {
+  return {
+    date: parseTime(d.date),
+    high: +d.high,
+    low: +d.low
+  };
+}).then(function(data) {
+  var svg = d3.select("#chart")
+							.append("svg")
+							.attr("width", "100%")
+							.attr("height", "100%"),
+	
+	margin = { top: 20, right: 80, bottom: 90, left: 50 },
+	
+	width = d3.select("#chart")
+						.node()
+						.getBoundingClientRect().width - margin.left - margin.right,
+	
+	height = d3.select("#chart")
+						.node()
+						.getBoundingClientRect().height - margin.top - margin.bottom,
+	g = svg.append("g")
+				.attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+	var x = d3.scaleTime().range([0, width]),
+			y = d3.scaleLinear().range([height, 0]),
+			z = d3.scaleOrdinal(["#c225f9", "#13e6d0"]);
+	var line = d3.line()
+			//.curve(d3.curveCardinal) if you need interpolated line
+			.x(function(d) { return x(d.date) })
+			.y(function(d) { return y(d.value) }),
+    traces = ["Planned Positive", "Planned Negative"],
+    plot = traces.map(function(trace) {
+        return {
+            id: trace,
+            values: data.map(function(d) {
+                return {
+                    date: d.date,
+                    value: (trace==="Planned Positive") ? d.high : d.low
+                };
+            })
+        }
+    })
+    x.domain([
+        d3.min(data, function(d) { return d.date }),
+        d3.max(data, function(d) { return d.date })
+    ]);
+    var yExtent = [
+        d3.min(data, function(d) { return d3.min([d.high, d.low])}),
+				d3.max(data, function(d) { return d3.max([d.high, d.low])})
+    ],
+    yRange = yExtent[1] - yExtent[0];
+    //set domain to be extent +- 5%
+    y.domain([+yExtent[0] - (+yRange * .05), +yExtent[1] + (+yRange * .05)]);
+    z.domain(traces);
+    //Grid lines
+    function make_x_gridlines() {		
+        return d3.axisBottom(x)
+            .ticks(data.length);
+    }
+    function make_y_gridlines() {		
+        return d3.axisLeft(y)
+            .ticks();
+    }
+    g.append("g")			
+        .attr("class", "grid")
+        .attr("transform", "translate(0," + height + ")")
+        .call(make_x_gridlines()
+            .tickSize(-height)
+            .tickFormat("")
+        );
+    g.append("g")			
+        .attr("class", "grid")
+        .call(make_y_gridlines()
+            .tickSize(-width)
+            .tickFormat("")
+        );
+    var xAxis = g.append("g")
+        .attr("class", "axis axis--x")
+        .attr("transform", "translate(0," + height + ")")
+        .call(d3.axisBottom(x).ticks(data.length).tickFormat(d3.timeFormat("%b %e")))
+        .selectAll("text")	
+            .style("text-anchor", "end")
+            .attr("dx", "-.8em")
+            .attr("dy", ".15em")
+            .attr("transform", "rotate(-65)"),
+    yAxis = g.append("g")
+        .attr("class", "axis axis--y")
+        .call(d3.axisLeft(y)),
+    
+    yAxisRight = g.append("g")
+        .attr("class", "axis axis--y-right")
+        .attr("transform", "translate( " + width + ", 0 )")
+        .call(d3.axisRight(y));
+    //Area (uncertainty)
+    var area = d3.area()
+        //.curve(d3.curveCardinal) if you need interpolated line
+        .x(function(d) { return x(d.date); })
+        .y0(function(d) { return y(d.high); })
+        .y1(function(d) { return y(d.low); }),
+                      
+    areaPath = g.append('path')
+        .datum(data)
+        .attr('class', 'area')
+        .attr('fill', 'url(#area-gradient)')
+        .attr("clip-path", "url(#clip)")
+        .attr('d', area),
+    clip = g.append("clipPath")
+        .attr("id", "clip")
+        .append("rect")
+        .attr("fill", "gray")
+        .attr("x", x(d3.min(data, function(d){ return d.date; }))-areaPath.node().getBBox().width)
+        .attr("y", y(d3.max(data, function(d){ return d3.max([d.high, d.low]); })) - 10)
+        .attr("width", areaPath.node().getBBox().width)
+        .attr("height", areaPath.node().getBBox().height + 10),
+    
+    gradient = svg.append("defs").append("linearGradient")
+        .attr("id", "area-gradient")
+        .attr("x1", "0%")
+        .attr("x2", "100%")
+        .attr("y1", "100%")
+        .attr("y2", "100%");
+    gradient.append("stop")
+        .attr('class', 'start')
+        .attr("offset", "0%")
+        .attr("stop-color", "#1a9ea9")
+        .attr("stop-opacity", .5);
+    gradient.append("stop")
+        .attr('class', 'end')
+        .attr("offset", "100%")
+        .attr("stop-color", "#0f0f79")
+        .attr("stop-opacity", .9);
+    //Planned region
+    var plannedRegion = g.append("g").attr("class", "planned"),
+    
+    trace = plannedRegion.selectAll(".trace")
+        .data(plot)
+        .enter().append("g")
+        .attr("class", "trace");
+    trace.append("path")
+        .attr("class", "line")
+        .attr("d", function(d) { return line(d.values) })
+        .style("stroke", function(d) { return z(d.id) });
+    // Lines from dots
+    trace.append("g").selectAll("line")
+        .data(function(d) { return d.values })
+        .enter()
+        .append("line")
+        .attr("x1", function(d) { return x(d.date) })
+        .attr("x2", function(d) { return x(x.domain()[1]) })
+        .attr("y1", function(d) { return y(d.value) })
+        .attr("y2", function(d) { return y(d.value) })
+        .attr("fill", "none")
+        .attr("stroke", "#808080")
+				.attr("stroke-dasharray", "5, 5");
+    // Data dots
+    trace.append("g").selectAll("circle")
+        .data(function(d) { return d.values })
+        .enter()
+        .append("circle")
+        .attr("r", 5)
+        .attr("cx", function(d) { return x(d.date) })
+        .attr("cy", function(d) { return y(d.value) })
+        .attr("fill", "none")
+        .attr("stroke", function(d) {return z(this.parentNode.__data__.id)});
+    //Labels for planned data
+    var mouseG = g.append("g")
+        .attr("class", "mouse-over-effects");
+    mouseG.append("path")
+        .attr("class", "mouse-line")
+        .style("stroke", "black")
+        .style("stroke-width", "1px")
+        .style("opacity", "0");
+        
+    var lines = document.getElementsByClassName('line'),
+    mousePerLine = mouseG.selectAll('.mouse-per-line')
+        .data(plot)
+        .enter()
+        .append("g")
+        .attr("class", "mouse-per-line");
+    mousePerLine.append("circle")
+        .attr("r", 7)
+        .style("stroke", function(d) { return z(d.id) })
+        .style("fill", "none")
+        .style("stroke-width", "1px")
+        .style("opacity", "0");
+    var labelGroup = mousePerLine.append("g").attr("class", "label").attr("transform", "translate(10,3)").style("opacity", "0");
+    
+    labelGroup.append('rect')
+        .attr("width", 20)
+        .attr("height", 10)
+        .attr("rx", 2)
+        .attr("ry", 2)
+        .attr("fill", "#fff")
+        .attr("stroke-width", "1px")
+        .attr("stroke", function(d){return z(this.parentNode.__data__.id)});
+    
+    labelGroup.append("text");
+    
+    mouseG.append('svg:rect')
+      .attr('width', areaPath.node().getBBox().width)
+      .attr('height', height)
+      .attr("x", x(d3.min(data, function(d) { return d.date })))
+      .attr('fill', 'none')
+      .attr('pointer-events', 'all')
+      .on('click', function() {
+            cloneGroup.selectAll("*").remove();
+      })
+      .on('mouseout', function() {
+        d3.select(".mouse-line")
+          .style("opacity", "0");
+        d3.selectAll(".mouse-over-effects .mouse-per-line circle")
+          .style("opacity", "0");
+        d3.selectAll(".mouse-over-effects .mouse-per-line .label")
+          .style("opacity", "0");
+      })
+      .on('mouseover', function() {
+        d3.select(".mouse-line")
+          .style("opacity", "1");
+        d3.selectAll(".mouse-over-effects .mouse-per-line circle")
+          .style("opacity", "1");
+        d3.selectAll(".mouse-over-effects .mouse-per-line .label")
+          .style("opacity", "1");
+      })
+      .on('mousemove', function() {
+        var mouse = d3.mouse(this);
+        d3.select(".mouse-line")
+          .attr("d", function() {
+            var d = "M" + mouse[0] + "," + height;
+            d += " " + mouse[0] + "," + 0;
+            return d;
+          });
+        d3.selectAll(".mouse-over-effects .mouse-per-line")
+          .attr("transform", function(d, i) {
+            var xDate = x.invert(mouse[0]),
+                  bisect = d3.bisector(function(d) { return d.date }).left;
+                  ticks = x.ticks(data.length),
+                  dist = ticks.map(function(d) { return x(xDate) - x(d) });
+            var ii = -1,
+                index = 0,
+                r = x.ticks ? x.range()[1] : x.rangeExtent()[1];
+            do {
+                ii++;
+                if (Math.abs(dist[ii]) < r) {
+                    r = Math.abs(dist[ii]);
+                    index = ii;
+                };
+            } while (dist[ii] > 0 && ii < dist.length - 1);
+            
+            var point = d.values[bisect(d.values, ticks[index])];
+            d3.select(this).select('text').text(point.value);
+            
+            var bbox = d3.select(this).select('text').node().getBBox()
+            d3.select(this).select('rect')
+                            .attr("y", -bbox.height)
+                            .attr("width", bbox.width+3)
+                            .attr("height", bbox.height+5);
+              
+            return "translate(" + x(ticks[index]) + "," + y(point.value) +")";
+          });
+      });
+    //Slider
+    var xSlider = d3.scaleLinear()
+        .domain([0, 100])
+        .range([0, areaPath.node().getBBox().width])
+        .clamp(true),
+    slider = g.append("g")
+        .attr("class", "slider")
+        .attr("transform", "translate(" + x(d3.min(data, function(d) {return d.date})) + "," + (g.node().getBBox().height+5) + ")");
+       
+    slider.insert("g", ".track-overlay")
+        .attr("class", "ticks")
+        .attr("transform", "translate(0,0)")
+    .selectAll("line")
+    .data(xSlider.ticks(data.length))
+    .enter().append("line")
+        .attr("x1", xSlider)
+        .attr("y1", 0)
+        .attr("x2", xSlider)
+        .attr("y2", -10)
+        .attr("stroke", "darkgray")
+        .attr("stroke-width", 1);
+    slider.append("line")
+        .attr("class", "track")
+        .attr("x1", xSlider.range()[0])
+        .attr("x2", xSlider.range()[1])
+    .select(function() { return this.parentNode.appendChild(this.cloneNode(true)); })
+        .attr("class", "track-inset")
+    .select(function() { return this.parentNode.appendChild(this.cloneNode(true)); })
+        .attr("class", "track-overlay")
+        .call(d3.drag()
+            .on("start.interrupt", function() {
+                cloneGroup.selectAll("*").remove(); 
+                for (var i = 0; i < timeouts.length; i++) {
+                    clearTimeout(timeouts[i]);
+                }
+                timeouts = [];
+                slider.interrupt();
+             })
+            .on("start drag", function() { uncertainty(xSlider.invert(d3.event.x)); }));
+    var handle = slider.insert("circle", ".track-overlay")
+        .attr("class", "handle")
+        .attr("r", 9);
+    var cloneGroup = g.append("g").attr("class", "clonegroup").attr("id", "clonegroup");
+    function uncertainty(h) {
+        var ticks = xSlider.ticks ? xSlider.ticks(data.length) : xSlider.domain(),
+              dist = ticks.map(function(d) { return xSlider(h) - xSlider(d) });
+        var i = -1,
+            index = 0,
+            r = xSlider.ticks ? xSlider.range()[1] : xSlider.rangeExtent()[1];
+        do {
+            i++;
+            if (Math.abs(dist[i]) < r) {
+                r = Math.abs(dist[i]);
+                index = i;
+            };
+        } while (dist[i] > 0 && i < dist.length - 1);
+        handle.transition()
+            .duration(200)
+                .attr("cx", xSlider(ticks[index]));
+        var moveWidth = areaPath.node().getBBox().width,
+        moveStep = moveWidth/xSlider.domain()[1];
+        d3.select("#clip rect").transition()
+            .duration(300)
+                .attr("x", x(d3.min(data, function(d) { return d.date })) - areaPath.node().getBBox().width + moveStep * ticks[index] )
+        //Show labels
+        d3.selectAll(".mouse-over-effects .mouse-per-line")
+            .attr("transform", function(d, i) {
+                var xDate = data[index].date,
+                    bisect = d3.bisector(function(d) { return d.date }).left;
+                    ticksX = x.ticks(data.length),
+                    distX = ticksX.map(function(d) {return x(xDate) - x(d)});
+                var ii = -1,
+                    ind = 0,
+                    r = x.ticks ? x.range()[1] : x.rangeExtent()[1];
+                do {
+                    ii++;
+                    if (Math.abs(distX[ii]) < r) {
+                        r = Math.abs(distX[ii]);
+                        ind = ii;
+                    };
+                } while (distX[ii] > 0 && ii < distX.length - 1);
+                
+                var point = d.values[bisect(d.values, ticksX[ind])];
+                
+                d3.selectAll(".mouse-over-effects .mouse-per-line circle")
+                    .style("opacity", "1");
+                d3.selectAll(".mouse-over-effects .mouse-per-line .label")
+                    .style("opacity", "1");
+                d3.select(this).select('text').text(point.value);
+                var bbox = d3.select(this).select('text').node().getBBox()
+                
+                d3.select(this).select('rect')
+                            .attr("y", -bbox.height)
+                            .attr("width", bbox.width+3)
+                            .attr("height", bbox.height+5);
+  
+                return "translate(" + x(ticksX[ind]) + "," + y(point.value) +")";
+            });
+            //Clone labels            
+            var labelList = d3.selectAll(".mouse-over-effects .mouse-per-line")._groups[0];
+            for (var j = 0; j < labelList.length; ++j) {
+                var item = labelList[j];
+                cloneGroup.node().appendChild(item.cloneNode(true));
+            }
+    }
+    //Play button
+    var button = g.append('g').attr('class', 'button'),
+    buttonText = button.append('text').text("Play")
+    bbox = buttonText.node().getBBox(),
+    sliderTransform = d3.select('.slider').attr("transform"),
+    sliderTranslate = sliderTransform.substring(sliderTransform.indexOf("(")+1, sliderTransform.indexOf(")")).split(","),
+    rect = button.insert('rect', 'text')
+        .attr("x", bbox.x-5)
+        .attr("y", bbox.y-5)
+        .attr("width", bbox.width + 10)
+        .attr("height", bbox.height + 10)
+        .attr('rx', 5)
+        .attr('ry', 5)
+        .attr("fill", "#eeeeee")
+        .attr("stroke", "#999faa")
+        .attr("stroke-width", 1)
+        .on('click', function() {
+            cloneGroup.selectAll("*").remove();
+            for (var i = 0; i < timeouts.length; i++) {
+                clearTimeout(timeouts[i]);
+            }
+            timeouts = [];
+            for (i = 0; i <= 100; i+=10) {
+                (function(i){
+                    timeouts.push(
+                        window.setTimeout(function() {
+                            uncertainty(i);
+                        }, i*100)
+                    );
+                }(i));
+            }
+        });
+    button.attr("transform", "translate(" + (+sliderTranslate[0] - rect.attr("width")) + "," + (+sliderTranslate[1] + 5) + ")");
+});
+</script>
+</body>
+</html>
